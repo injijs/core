@@ -4,7 +4,9 @@ import {
   type SerialPortLike,
   type TcpSocketLike,
   TcpTransport,
+  type UsbConfigurationLike,
   type UsbDeviceLike,
+  type UsbOutTransferResultLike,
   WebSerialTransport,
   WebUsbTransport,
 } from "../src/transports/index.ts";
@@ -244,7 +246,7 @@ describe("transports", () => {
       const calls: string[] = [];
       const transferred: Array<{ endpoint: number; data: Uint8Array }> = [];
       let isOpened = false;
-      let currentConfig: unknown = null;
+      let currentConfig: UsbConfigurationLike | null = null;
 
       const mockDevice: UsbDeviceLike = {
         get opened() {
@@ -259,15 +261,18 @@ describe("transports", () => {
         },
         async selectConfiguration(val: number) {
           calls.push(`selectConfig:${val}`);
-          currentConfig = {};
+          currentConfig = { configurationValue: val };
         },
         async claimInterface(num: number) {
           calls.push(`claimInterface:${num}`);
         },
-        async transferOut(endpointNumber: number, data: Uint8Array) {
+        async transferOut(
+          endpointNumber: number,
+          data: Uint8Array,
+        ): Promise<UsbOutTransferResultLike> {
           calls.push(`transferOut:${endpointNumber}`);
           transferred.push({ endpoint: endpointNumber, data });
-          return {};
+          return { bytesWritten: data.length, status: "ok" };
         },
         async close() {
           calls.push("close");
@@ -296,12 +301,15 @@ describe("transports", () => {
     test("validates USB configurationValue, interfaceNumber, and endpointNumber in constructor", () => {
       const dummyDevice: UsbDeviceLike = {
         opened: true,
-        configuration: {},
+        configuration: { configurationValue: 1 },
         async open() {},
         async selectConfiguration() {},
         async claimInterface() {},
-        async transferOut() {
-          return {};
+        async transferOut(
+          _endpointNumber: number,
+          data: Uint8Array,
+        ): Promise<UsbOutTransferResultLike> {
+          return { bytesWritten: data.length, status: "ok" };
         },
         async close() {},
       };

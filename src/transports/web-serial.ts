@@ -83,16 +83,31 @@ export class WebSerialTransport implements PrinterTransport {
 }
 
 /**
+ * Minimal structural interface for a WebUSB `USBConfiguration` object.
+ */
+export interface UsbConfigurationLike {
+  readonly configurationValue: number;
+}
+
+/**
+ * Minimal structural interface for a WebUSB `USBOutTransferResult` object.
+ */
+export interface UsbOutTransferResultLike {
+  readonly bytesWritten: number;
+  readonly status: "ok" | "stall" | "babble";
+}
+
+/**
  * Minimal structural interface for a browser WebUSB API `USBDevice` object.
  * Avoids requiring global `@types/w3c-web-usb` in consumer projects.
  */
 export interface UsbDeviceLike {
   readonly opened: boolean;
-  readonly configuration: unknown | null;
+  readonly configuration: UsbConfigurationLike | null;
   open(): Promise<void>;
   selectConfiguration(configurationValue: number): Promise<void>;
   claimInterface(interfaceNumber: number): Promise<void>;
-  transferOut(endpointNumber: number, data: Uint8Array): Promise<unknown>;
+  transferOut(endpointNumber: number, data: Uint8Array): Promise<UsbOutTransferResultLike>;
   close(): Promise<void>;
 }
 
