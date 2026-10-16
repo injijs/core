@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vite-plus/test";
 import type { DocumentAST } from "../src/ast.ts";
-import { compileDocument, resolveDocumentItems } from "../src/compiler.ts";
+import { compileDocument, compileDocuments, resolveDocumentItems } from "../src/compiler.ts";
 import { col, dot180, line, mm } from "../src/units.ts";
 
 describe("compiler", () => {
@@ -438,6 +438,25 @@ describe("compiler", () => {
           0x0d, // Final CR
         ]),
       );
+    });
+  });
+
+  describe("compileDocuments", () => {
+    test("concatenates multiple pages into a single continuous ESC/P byte stream", () => {
+      const page1: DocumentAST = { nodes: [{ type: "text", x: 0, y: 0, text: "1" }] };
+      const page2: DocumentAST = { nodes: [{ type: "text", x: 0, y: 0, text: "2" }] };
+
+      const combined = compileDocuments([page1, page2]);
+      const p1Bytes = compileDocument(page1);
+      const p2Bytes = compileDocument(page2);
+
+      expect(combined.length).toBe(p1Bytes.length + p2Bytes.length);
+      expect(combined.slice(0, p1Bytes.length)).toEqual(p1Bytes);
+      expect(combined.slice(p1Bytes.length)).toEqual(p2Bytes);
+    });
+
+    test("returns an empty Uint8Array when given an empty array of documents", () => {
+      expect(compileDocuments([])).toEqual(new Uint8Array([]));
     });
   });
 });

@@ -325,3 +325,18 @@ export function compileDocument(doc: DocumentAST): Uint8Array {
 
   return concatBytes(chunks);
 }
+
+/**
+ * Compiles multiple {@link DocumentAST} pages into a single continuous ESC/P 24-J84 byte stream (`Uint8Array`).
+ * Ideal for multi-page invoices and batch printing on continuous tractor-feed forms in a single transport send.
+ *
+ * @param docs - Array of document AST pages to compile in order.
+ * @returns Combined ESC/P 24-J84 byte stream for all pages.
+ */
+export function compileDocuments(docs: readonly DocumentAST[]): Uint8Array {
+  if (docs.length === 0) {
+    return new Uint8Array([]);
+  }
+  const pageChunks = docs.map((doc) => compileDocument(doc));
+  return concatBytes(pageChunks);
+}
