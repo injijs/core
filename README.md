@@ -4,6 +4,11 @@ Zero-dependency Universal TypeScript library for **ESC/P 24-J84** (24-pin Japane
 
 ESC/P 24-J84（24ピン漢字ドットインパクトプリンタ）向けの、外部依存ゼロ・Universal（Node.js / ブラウザ / エッジランタイム）対応の TypeScript 印字制御ライブラリです。既製複写伝票（納品書、請求書、チェーンストア統一伝票、送り状、マニフェスト等）への高精度な枠合わせ印字を実現します。
 
+## Current Status & Disclaimer / 免責事項
+
+- **JP**: 本ライブラリはESC/P 24-J84のコマンド仕様に基づきユニットテスト等でバイナリ検証を行っていますが、現時点で実機による印字確認は未実施です。実機をお持ちの方からの動作レポートやフィードバックを歓迎しています。
+- **EN**: This library is tested against the ESC/P 24-J84 command specifications via automated binary unit tests, but has not yet been verified on physical hardware. Testing feedback and issue reports from physical device users are welcome!
+
 ## Features
 
 - **Zero Dependencies & Universal**: Pure `Uint8Array` and standard Web APIs (`TextDecoder`)—runs anywhere (Browser, Node.js, Hono, Cloudflare Workers).
