@@ -1,0 +1,4 @@
+[tools]
+gh = "latest"
+pinact = "latest"
+viteplus = "latest"
