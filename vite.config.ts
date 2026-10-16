@@ -6,6 +6,7 @@ export default defineConfig({
     ".github/workflows/*.{yml,yaml}": "pinact run",
   },
   pack: {
+    entry: ["src/index.ts", "src/transports/index.ts"],
     deps: {
       // tsdown <0.23 compatibility: resolve external dependency subpaths.
       // Remove to preserve subpath imports as written (the new default).

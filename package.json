@@ -27,6 +27,7 @@
   "type": "module",
   "exports": {
     ".": "./dist/index.mjs",
+    "./transports": "./dist/transports/index.mjs",
     "./package.json": "./package.json"
   },
   "publishConfig": {
