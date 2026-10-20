@@ -1,6 +1,6 @@
 {
   "name": "@injijs/core",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Zero-dependency TypeScript library for ESC/P 24-J84 dot-matrix impact printers.",
   "keywords": [
     "24-j84",
