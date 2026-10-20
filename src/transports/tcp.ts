@@ -1,5 +1,5 @@
 import { createConnection } from "node:net";
-import type { PrinterTransport } from "./types.ts";
+import { DEFAULT_CHUNK_SIZE, type PrinterTransport, splitIntoChunks } from "./types.ts";
 
 /**
  * Minimal structural interface for a Node.js-compatible TCP socket.
@@ -23,6 +23,8 @@ export interface TcpTransportOptions {
   port?: number;
   /** Socket connection and inactivity timeout in milliseconds. Defaults to `5000`. */
   timeoutMs?: number;
+  /** Maximum byte size per write chunk. Defaults to {@link DEFAULT_CHUNK_SIZE} (`4096`). */
+  chunkSize?: number;
   /** Optional custom socket factory used for dependency injection in tests. */
   connect?: (options: { host: string; port: number }) => TcpSocketLike;
 }
@@ -34,13 +36,14 @@ export class TcpTransport implements PrinterTransport {
   private readonly host: string;
   private readonly port: number;
   private readonly timeoutMs: number;
+  private readonly chunkSize: number;
   private readonly connectImpl: (options: { host: string; port: number }) => TcpSocketLike;
 
   /**
    * Creates a new {@link TcpTransport} instance.
    *
-   * @param options - Target printer host, port (default `9100`), and timeout settings.
-   * @throws {@link RangeError} If `host` is empty, `port` is outside `1..65535`, or `timeoutMs` is not positive.
+   * @param options - Target printer host, port (default `9100`), timeout, and chunk size settings.
+   * @throws {@link RangeError} If `host` is empty, `port` is outside `1..65535`, `timeoutMs` is not positive, or `chunkSize` is not a positive integer.
    */
   constructor(options: TcpTransportOptions) {
     const trimmedHost = options.host.trim();
@@ -58,18 +61,26 @@ export class TcpTransport implements PrinterTransport {
       throw new RangeError("TCP timeoutMs must be a positive finite number.");
     }
 
+    const chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE;
+    if (!Number.isInteger(chunkSize) || chunkSize <= 0) {
+      throw new RangeError("TCP chunkSize must be a positive integer.");
+    }
+
     this.host = trimmedHost;
     this.port = port;
     this.timeoutMs = timeoutMs;
+    this.chunkSize = chunkSize;
     this.connectImpl = options.connect ?? ((opts) => createConnection(opts));
   }
 
   /**
-   * Opens a TCP connection to the printer, writes the entire ESC/P byte sequence, and closes the socket cleanly.
+   * Opens a TCP connection to the printer, writes the ESC/P byte sequence in chunks, and closes the socket cleanly.
    *
    * @param data - Raw ESC/P 24-J84 byte sequence to transmit.
    */
   send(data: Uint8Array): Promise<void> {
+    const chunks = splitIntoChunks(data, this.chunkSize);
+
     return new Promise<void>((resolve, reject) => {
       const socket = this.connectImpl({ host: this.host, port: this.port });
       let settled = false;
@@ -104,18 +115,33 @@ export class TcpTransport implements PrinterTransport {
       });
 
       socket.once("connect", () => {
-        socket.write(data, (writeErr) => {
-          if (writeErr) {
-            fail(writeErr);
+        let index = 0;
+
+        const writeNext = (): void => {
+          if (settled) {
             return;
           }
-          socket.end(() => {
-            if (!settled) {
-              settled = true;
-              resolve();
+          const chunk = chunks[index++];
+          if (!chunk) {
+            socket.end(() => {
+              if (!settled) {
+                settled = true;
+                resolve();
+              }
+            });
+            return;
+          }
+
+          socket.write(chunk, (writeErr) => {
+            if (writeErr) {
+              fail(writeErr);
+              return;
             }
+            writeNext();
           });
-        });
+        };
+
+        writeNext();
       });
     });
   }

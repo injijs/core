@@ -1,6 +1,6 @@
 export { MemoryTransport } from "./memory.ts";
 export { type TcpSocketLike, TcpTransport, type TcpTransportOptions } from "./tcp.ts";
-export type { PrinterTransport } from "./types.ts";
+export { DEFAULT_CHUNK_SIZE, type PrinterTransport } from "./types.ts";
 export {
   type SerialPortLike,
   type SerialPortWriterLike,

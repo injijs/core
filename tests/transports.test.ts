@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vite-plus/test";
 import {
+  DEFAULT_CHUNK_SIZE,
   MemoryTransport,
   type SerialPortLike,
   type TcpSocketLike,
@@ -12,6 +13,10 @@ import {
 } from "../src/transports/index.ts";
 
 describe("transports", () => {
+  test("exports DEFAULT_CHUNK_SIZE as 4096 bytes", () => {
+    expect(DEFAULT_CHUNK_SIZE).toBe(4096);
+  });
+
   describe("MemoryTransport", () => {
     test("records defensive copies of sent chunks and concatenates them via toUint8Array()", async () => {
       const transport = new MemoryTransport();
@@ -33,11 +38,13 @@ describe("transports", () => {
   });
 
   describe("TcpTransport", () => {
-    test("validates host, port, and timeoutMs in constructor", () => {
+    test("validates host, port, timeoutMs, and chunkSize in constructor", () => {
       expect(() => new TcpTransport({ host: "   " })).toThrow(RangeError);
       expect(() => new TcpTransport({ host: "192.168.1.50", port: 0 })).toThrow(RangeError);
       expect(() => new TcpTransport({ host: "192.168.1.50", port: 70000 })).toThrow(RangeError);
       expect(() => new TcpTransport({ host: "192.168.1.50", timeoutMs: 0 })).toThrow(RangeError);
+      expect(() => new TcpTransport({ host: "192.168.1.50", chunkSize: 0 })).toThrow(RangeError);
+      expect(() => new TcpTransport({ host: "192.168.1.50", chunkSize: 1.5 })).toThrow(RangeError);
     });
 
     test("connects to default port 9100, writes data, and ends the socket cleanly", async () => {
@@ -73,6 +80,46 @@ describe("transports", () => {
       expect(connectedTarget).toEqual({ host: "192.168.1.200", port: 9100 });
       expect(writtenChunks).toEqual([payload]);
       expect(ended).toBe(true);
+    });
+
+    test("splits large payloads by default 4096-byte chunkSize and custom chunkSize", async () => {
+      const writtenChunks: Uint8Array[] = [];
+
+      const mockConnect = (): TcpSocketLike => ({
+        setTimeout() {},
+        once(event: string, listener: (err?: Error) => void) {
+          if (event === "connect") {
+            queueMicrotask(() => listener());
+          }
+        },
+        write(data: Uint8Array, callback?: (err?: Error | null) => void) {
+          writtenChunks.push(data);
+          callback?.(null);
+        },
+        end(callback?: () => void) {
+          callback?.();
+        },
+        destroy() {},
+      });
+
+      // Default 4096-byte chunking: 5000 bytes -> 4096 + 904
+      const defaultTransport = new TcpTransport({ host: "192.168.1.200", connect: mockConnect });
+      await defaultTransport.send(new Uint8Array(5000).fill(0x41));
+      expect(writtenChunks.map((c) => c.length)).toEqual([4096, 904]);
+
+      // Custom chunkSize: 3 bytes on 7-byte payload -> 3 + 3 + 1
+      writtenChunks.length = 0;
+      const customTransport = new TcpTransport({
+        host: "192.168.1.200",
+        chunkSize: 3,
+        connect: mockConnect,
+      });
+      await customTransport.send(new Uint8Array([1, 2, 3, 4, 5, 6, 7]));
+      expect(writtenChunks).toEqual([
+        new Uint8Array([1, 2, 3]),
+        new Uint8Array([4, 5, 6]),
+        new Uint8Array([7]),
+      ]);
     });
 
     test("destroys the socket and rejects on socket error, write error, premature close, or timeout", async () => {
@@ -164,7 +211,7 @@ describe("transports", () => {
   });
 
   describe("WebSerialTransport", () => {
-    test("opens port if not writable, writes bytes, releases lock, and optionally closes port", async () => {
+    test("opens port if not writable, writes bytes in chunks, releases lock, and optionally closes port", async () => {
       let openedBaudRate: number | undefined;
       let lockReleased = false;
       let closed = false;
@@ -195,12 +242,20 @@ describe("transports", () => {
         },
       };
 
-      const transport = new WebSerialTransport(mockPort, { baudRate: 19200, autoClose: true });
-      const payload = new Uint8Array([0x1b, 0x40]);
+      const transport = new WebSerialTransport(mockPort, {
+        baudRate: 19200,
+        chunkSize: 2,
+        autoClose: true,
+      });
+      const payload = new Uint8Array([0x1b, 0x40, 0x41, 0x0d, 0x0c]);
       await transport.send(payload);
 
       expect(openedBaudRate).toBe(19200);
-      expect(written).toEqual([payload]);
+      expect(written).toEqual([
+        new Uint8Array([0x1b, 0x40]),
+        new Uint8Array([0x41, 0x0d]),
+        new Uint8Array([0x0c]),
+      ]);
       expect(lockReleased).toBe(true);
       expect(closed).toBe(true);
     });
@@ -231,18 +286,19 @@ describe("transports", () => {
       expect(lockReleased).toBe(true);
     });
 
-    test("validates baudRate in constructor", () => {
+    test("validates baudRate and chunkSize in constructor", () => {
       const dummyPort: SerialPortLike = {
         writable: null,
         async open() {},
         async close() {},
       };
       expect(() => new WebSerialTransport(dummyPort, { baudRate: 0 })).toThrow(RangeError);
+      expect(() => new WebSerialTransport(dummyPort, { chunkSize: 0 })).toThrow(RangeError);
     });
   });
 
   describe("WebUsbTransport", () => {
-    test("opens USB device, selects configuration, claims interface, and transfers out", async () => {
+    test("opens USB device, selects configuration, claims interface, and transfers out in chunks", async () => {
       const calls: string[] = [];
       const transferred: Array<{ endpoint: number; data: Uint8Array }> = [];
       let isOpened = false;
@@ -283,9 +339,10 @@ describe("transports", () => {
         configurationValue: 1,
         interfaceNumber: 0,
         endpointNumber: 2,
+        chunkSize: 2,
         autoClose: true,
       });
-      const payload = new Uint8Array([0x1b, 0x40]);
+      const payload = new Uint8Array([0x1b, 0x40, 0x0c]);
       await transport.send(payload);
 
       expect(calls).toEqual([
@@ -293,12 +350,16 @@ describe("transports", () => {
         "selectConfig:1",
         "claimInterface:0",
         "transferOut:2",
+        "transferOut:2",
         "close",
       ]);
-      expect(transferred).toEqual([{ endpoint: 2, data: payload }]);
+      expect(transferred).toEqual([
+        { endpoint: 2, data: new Uint8Array([0x1b, 0x40]) },
+        { endpoint: 2, data: new Uint8Array([0x0c]) },
+      ]);
     });
 
-    test("validates USB configurationValue, interfaceNumber, and endpointNumber in constructor", () => {
+    test("validates USB configurationValue, interfaceNumber, endpointNumber, and chunkSize in constructor", () => {
       const dummyDevice: UsbDeviceLike = {
         opened: true,
         configuration: { configurationValue: 1 },
@@ -316,6 +377,7 @@ describe("transports", () => {
       expect(() => new WebUsbTransport(dummyDevice, { configurationValue: 0 })).toThrow(RangeError);
       expect(() => new WebUsbTransport(dummyDevice, { interfaceNumber: -1 })).toThrow(RangeError);
       expect(() => new WebUsbTransport(dummyDevice, { endpointNumber: 0 })).toThrow(RangeError);
+      expect(() => new WebUsbTransport(dummyDevice, { chunkSize: 0 })).toThrow(RangeError);
     });
   });
 });

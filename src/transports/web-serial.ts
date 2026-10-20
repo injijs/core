@@ -1,4 +1,4 @@
-import type { PrinterTransport } from "./types.ts";
+import { DEFAULT_CHUNK_SIZE, type PrinterTransport, splitIntoChunks } from "./types.ts";
 
 /**
  * Minimal structural interface for a Web Serial API writer (`WritableStreamDefaultWriter<Uint8Array>`).
@@ -26,6 +26,8 @@ export interface SerialPortLike {
 export interface WebSerialTransportOptions {
   /** Serial baud rate used when opening the port. Defaults to `9600`. */
   baudRate?: number;
+  /** Maximum byte size per write chunk. Defaults to {@link DEFAULT_CHUNK_SIZE} (`4096`). */
+  chunkSize?: number;
   /** Whether to close the serial port automatically after each {@link WebSerialTransport.send} call. Defaults to `false`. */
   autoClose?: boolean;
 }
@@ -36,14 +38,15 @@ export interface WebSerialTransportOptions {
 export class WebSerialTransport implements PrinterTransport {
   private readonly port: SerialPortLike;
   private readonly baudRate: number;
+  private readonly chunkSize: number;
   private readonly autoClose: boolean;
 
   /**
    * Creates a new {@link WebSerialTransport} wrapping a browser `SerialPort`.
    *
    * @param port - Web Serial port obtained via `navigator.serial.requestPort()`.
-   * @param options - Optional baud rate (default `9600`) and auto-close settings.
-   * @throws {@link RangeError} If `baudRate` is not a positive finite integer.
+   * @param options - Optional baud rate (default `9600`), chunk size (default `4096`), and auto-close settings.
+   * @throws {@link RangeError} If `baudRate` or `chunkSize` is not a positive integer.
    */
   constructor(port: SerialPortLike, options?: WebSerialTransportOptions) {
     const baudRate = options?.baudRate ?? 9600;
@@ -51,13 +54,19 @@ export class WebSerialTransport implements PrinterTransport {
       throw new RangeError("Serial baudRate must be a positive integer.");
     }
 
+    const chunkSize = options?.chunkSize ?? DEFAULT_CHUNK_SIZE;
+    if (!Number.isInteger(chunkSize) || chunkSize <= 0) {
+      throw new RangeError("Serial chunkSize must be a positive integer.");
+    }
+
     this.port = port;
     this.baudRate = baudRate;
+    this.chunkSize = chunkSize;
     this.autoClose = options?.autoClose ?? false;
   }
 
   /**
-   * Opens the serial port if not already writable, writes the ESC/P byte stream, and releases the writer lock.
+   * Opens the serial port if not already writable, writes the ESC/P byte stream in chunks, and releases the writer lock.
    *
    * @param data - Raw ESC/P 24-J84 byte sequence to transmit.
    */
@@ -69,9 +78,12 @@ export class WebSerialTransport implements PrinterTransport {
       throw new Error("SerialPort writable stream is unavailable after opening.");
     }
 
+    const chunks = splitIntoChunks(data, this.chunkSize);
     const writer = this.port.writable.getWriter();
     try {
-      await writer.write(data);
+      for (const chunk of chunks) {
+        await writer.write(chunk);
+      }
     } finally {
       writer.releaseLock();
     }
@@ -121,6 +133,8 @@ export interface WebUsbTransportOptions {
   interfaceNumber?: number;
   /** Bulk OUT endpoint number used by `transferOut`. Defaults to `1`. */
   endpointNumber?: number;
+  /** Maximum byte size per USB bulk OUT transfer chunk. Defaults to {@link DEFAULT_CHUNK_SIZE} (`4096`). */
+  chunkSize?: number;
   /** Whether to close the USB device automatically after each {@link WebUsbTransport.send} call. Defaults to `false`. */
   autoClose?: boolean;
 }
@@ -133,14 +147,15 @@ export class WebUsbTransport implements PrinterTransport {
   private readonly configurationValue: number;
   private readonly interfaceNumber: number;
   private readonly endpointNumber: number;
+  private readonly chunkSize: number;
   private readonly autoClose: boolean;
 
   /**
    * Creates a new {@link WebUsbTransport} wrapping a browser `USBDevice`.
    *
    * @param device - WebUSB device obtained via `navigator.usb.requestDevice()`.
-   * @param options - Optional USB configuration, interface, and bulk OUT endpoint settings.
-   * @throws {@link RangeError} If `configurationValue`, `interfaceNumber`, or `endpointNumber` is invalid.
+   * @param options - Optional USB configuration, interface, bulk OUT endpoint, and chunk size settings.
+   * @throws {@link RangeError} If `configurationValue`, `interfaceNumber`, `endpointNumber`, or `chunkSize` is invalid.
    */
   constructor(device: UsbDeviceLike, options?: WebUsbTransportOptions) {
     const configurationValue = options?.configurationValue ?? 1;
@@ -158,15 +173,21 @@ export class WebUsbTransport implements PrinterTransport {
       throw new RangeError("USB endpointNumber must be a positive integer.");
     }
 
+    const chunkSize = options?.chunkSize ?? DEFAULT_CHUNK_SIZE;
+    if (!Number.isInteger(chunkSize) || chunkSize <= 0) {
+      throw new RangeError("USB chunkSize must be a positive integer.");
+    }
+
     this.device = device;
     this.configurationValue = configurationValue;
     this.interfaceNumber = interfaceNumber;
     this.endpointNumber = endpointNumber;
+    this.chunkSize = chunkSize;
     this.autoClose = options?.autoClose ?? false;
   }
 
   /**
-   * Opens and claims the USB printer interface if needed, then transfers the ESC/P byte stream to the bulk OUT endpoint.
+   * Opens and claims the USB printer interface if needed, then transfers the ESC/P byte stream in chunks to the bulk OUT endpoint.
    *
    * @param data - Raw ESC/P 24-J84 byte sequence to transmit.
    */
@@ -178,7 +199,11 @@ export class WebUsbTransport implements PrinterTransport {
       await this.device.selectConfiguration(this.configurationValue);
     }
     await this.device.claimInterface(this.interfaceNumber);
-    await this.device.transferOut(this.endpointNumber, data);
+
+    const chunks = splitIntoChunks(data, this.chunkSize);
+    for (const chunk of chunks) {
+      await this.device.transferOut(this.endpointNumber, chunk);
+    }
 
     if (this.autoClose) {
       await this.device.close();
